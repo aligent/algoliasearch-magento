@@ -32,10 +32,12 @@ class Algolia_Algoliasearch_Model_Resource_Fulltext extends Mage_CatalogSearch_M
      */
     public function prepareResult($object, $queryText, $query)
     {
+        Varien_Profiler::start('Algolia/FullText-prepareResult');
         try {
             $this->beginTransaction();
             if ( ! $this->lockQueryForTransaction($query)) {
                 $this->commit();
+                Varien_Profiler::stop('Algolia/FullText-prepareResult');
                 return $this;
             }
 
@@ -43,39 +45,30 @@ class Algolia_Algoliasearch_Model_Resource_Fulltext extends Mage_CatalogSearch_M
             if ( ! $this->_helper->isEnabled()) {
                 parent::prepareResult($object, $queryText, $query);
                 $this->commit();
+                Varien_Profiler::stop('Algolia/FullText-prepareResult');
                 return $this;
             }
 
-            if (!$query->getIsProcessed() || true) {
+            Varien_Profiler::start('Algolia/FullText-prepareResult-process');
+            if (!$query->getIsProcessed())
+            {
                 try {
-                    $answer = Mage::helper('algoliasearch')->query(Mage::helper('algoliasearch')->getIndexName(Mage::app()->getStore()->getId()), $queryText, array(
-                        'hitsPerPage' => 1000, // retrieve all the hits (hard limit is 1000)
-                        'attributesToRetrieve' => 'objectID',
-                        'attributesToHighlight' => '',
-                        'attributesToSnippet' => '',
-                        'tagFilters' => 'product',
-                        'removeWordsIfNoResult'=> Mage::helper('algoliasearch')->getRemoveWordsIfNoResult(Mage::app()->getStore()->getId()),
-                    ));
+                    $data = Mage::helper('algoliasearch')->getSearchResult($queryText, $query->getStoreId());
                 } catch (Exception $e) {
                     Mage::getSingleton('catalog/session')->addError(Mage::helper('algoliasearch')->__('Search failed. Please try again.'));
                     throw $e;
                 }
-
-                $data = array();
-                foreach ($answer['hits'] as $i => $hit) {
-                    $objectIdParts = explode('_', $hit['objectID'], 2);
-                    $productId = isset($objectIdParts[1]) ? $objectIdParts[1] : NULL;
-                    if ($productId) {
-                        $data[$productId] = array(
-                            'query_id' => $query->getId(),
-                            'product_id' => $productId,
-                            'relevance' => 1000 - $i,
-                        );
-                    }
+                foreach ($data as $productId => $relevance) {
+                    $data[$productId] = array(
+                        'query_id' => $query->getId(),
+                        'product_id' => $productId,
+                        'relevance' => $relevance,
+                    );
                 }
+
+                // Filter products that do not exist or are disabled for the website (e.g. if product was deleted or removed
+                // from catalog but not yet from index). Avoids foreign key errors and incorrect listings
                 if ($data) {
-                    // Filter products that do not exist or are disabled for the website (e.g. if product was deleted or removed
-                    // from catalog but not yet from index). Avoids foreign key errors and incorrect listings
                     $existingProductIds = $this->_getWriteAdapter()->fetchCol($this->_getWriteAdapter()->select()
                         ->from($this->_getWriteAdapter()->getTableName('catalog_product_website'), array('product_id'))
                         ->where('website_id = ?', Mage::app()->getStore($query->getStoreId())->getWebsiteId())
@@ -85,13 +78,28 @@ class Algolia_Algoliasearch_Model_Resource_Fulltext extends Mage_CatalogSearch_M
                     foreach ($ignoreProductIds as $productId) {
                         unset($data[$productId]);
                     }
+                }
+
+                // Delete old results that are no longer relevant
+                if ($query->getId()) {
+                    $deleteWhere = $this->_getWriteAdapter()->quoteInto('query_id = ?', $query->getId());
                     if ($data) {
-                        $this->_getWriteAdapter()->insertOnDuplicate(
-                             $this->getTable('catalogsearch/result'),
-                             array_values($data),
-                             array('relevance')
-                        );
+                        $deleteWhere .= ' AND '.$this->_getWriteAdapter()->quoteInto('product_id NOT IN (?)', array_keys($data));
                     }
+                    $this->_getWriteAdapter()->delete($this->getTable('catalogsearch/result'), $deleteWhere);
+                }
+
+                // Insert results / update relevance
+                if ($data) {
+                    // Lock for update to avoid deadlocks with in-progress orders (foreign key on catalog_product_entity locks rows)
+                    $stock = Mage::getSingleton('cataloginventory/stock');
+                    $stock->getResource()->getProductsStock($stock, array_keys($data), true);
+
+                    $this->_getWriteAdapter()->insertOnDuplicate(
+                         $this->getTable('catalogsearch/result'),
+                         array_values($data),
+                         array('relevance')
+                    );
                 }
                 $query->setIsProcessed(1);
             }
@@ -101,6 +109,8 @@ class Algolia_Algoliasearch_Model_Resource_Fulltext extends Mage_CatalogSearch_M
             $this->rollBack();
             Mage::logException($e);
         }
+        Varien_Profiler::stop('Algolia/FullText-prepareResult-process');
+        Varien_Profiler::stop('Algolia/FullText-prepareResult');
 
         return $this;
     }

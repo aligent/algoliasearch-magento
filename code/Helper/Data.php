@@ -24,6 +24,8 @@ class Algolia_Algoliasearch_Helper_Data extends Mage_Core_Helper_Abstract
     const XML_PATH_CUSTOM_RANKING_ATTRIBUTES     = 'algoliasearch/settings/custom_ranking_attributes';
     const XML_PATH_INDEX_PRODUCT_COUNT           = 'algoliasearch/settings/index_product_count';
     const XML_PATH_CUSTOM_INDEX_SETTINGS         = 'algoliasearch/settings/custom_index_settings';
+    const XML_PATH_RESULTS_LIMIT                 = 'algoliasearch/settings/results_limit';
+    const XML_PATH_USE_RESULT_CACHE              = 'algoliasearch/settings/use_result_cache';
 
     private static $_categoryNames;
     private static $_activeCategories;
@@ -171,6 +173,45 @@ class Algolia_Algoliasearch_Helper_Data extends Mage_Core_Helper_Abstract
     }
 
     /**
+     * Get array of [product_id => [relevance]
+     *
+     * @param $queryText
+     * @param $storeId
+     * @return array
+     * @throws Exception
+     */
+    public function getSearchResult($queryText, $storeId)
+    {
+        Varien_Profiler::start('Algolia-FullText-getSearchResult');
+        try {
+            $resultsLimit = $this->getResultsLimit($storeId);
+            $answer = $this->query($this->getIndexName($storeId), $queryText, array(
+                'hitsPerPage' => max(5,min($resultsLimit, 1000)), // retrieve all the hits (hard limit is 1000)
+                'attributesToRetrieve' => 'objectID',
+                'attributesToHighlight' => '',
+                'attributesToSnippet' => '',
+                'tagFilters' => 'product',
+                'removeWordsIfNoResult'=> $this->getRemoveWordsIfNoResult($storeId),
+            ));
+        } catch (Exception $e) {
+            Varien_Profiler::stop('Algolia-FullText-getSearchResult');
+            throw $e;
+        }
+
+        $data = array();
+        foreach ($answer['hits'] as $i => $hit) {
+            $objectIdParts = explode('_', $hit['objectID'], 2);
+            $productId = ! empty($objectIdParts[1]) && ctype_digit($objectIdParts[1]) ? (int)$objectIdParts[1] : NULL;
+            if ($productId) {
+                $data[$productId] = $resultsLimit - $i;
+            }
+        }
+        Varien_Profiler::stop('Algolia-FullText-getSearchResult');
+
+        return $data;
+    }
+
+    /**
      * Return array of all category attributes that can be indexed (all except internal attributes and default attributes for indexing)
      *
      * @return array
@@ -233,6 +274,8 @@ class Algolia_Algoliasearch_Helper_Data extends Mage_Core_Helper_Abstract
     {
         $transport = new Varien_Object($defaultData);
         Mage::dispatchEvent('algolia_product_index_before', array('product' => $product, 'custom_data' => $transport));
+        $defaultData = $transport->getData();
+
         $defaultData = is_array($defaultData) ? $defaultData : explode("|",$defaultData);
 
         $categories = array();
@@ -270,6 +313,10 @@ class Algolia_Algoliasearch_Helper_Data extends Mage_Core_Helper_Abstract
             $customData['image_url'] = $imageUrl;
         }
         $customData = array_merge($customData, $defaultData);
+
+        if (isset($customData['price'])) {
+            $customData['price'] = floatval($customData['price']);
+        }
 
         return $customData;
     }
@@ -795,4 +842,15 @@ class Algolia_Algoliasearch_Helper_Data extends Mage_Core_Helper_Abstract
     public function getCustomRankings($storeId = NULL) {
         return unserialize(Mage::getStoreConfig(self::XML_PATH_CUSTOM_RANKING_ATTRIBUTES, $storeId));
     }
+
+    public function getResultsLimit($storeId = NULL)
+    {
+        return Mage::getStoreConfig(self::XML_PATH_RESULTS_LIMIT, $storeId);
+    }
+
+    public function useResultCache($storeId = NULL)
+    {
+        return (bool) Mage::getStoreConfigFlag(self::XML_PATH_USE_RESULT_CACHE, $storeId);
+    }
+
 }
