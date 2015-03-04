@@ -256,9 +256,9 @@ class Algolia_Algoliasearch_Model_Indexer_Algolia extends Mage_Index_Model_Index
                 $product = $event->getDataObject();
                 // Delete disabled or not visible for search products
                 $delete = FALSE;
-                if ($product->dataHasChangedFor('status') && $product->getStatus() == Mage_Catalog_Model_Product_Status::STATUS_DISABLED) {
+                if ($product->getStatus() == Mage_Catalog_Model_Product_Status::STATUS_DISABLED) {
                     $delete = TRUE;
-                } elseif ($product->dataHasChangedFor('visibility') && ! in_array($product->getData('visibility'), Mage::getSingleton('catalog/product_visibility')->getVisibleInSearchIds())) {
+                } elseif (!in_array($product->getData('visibility'), Mage::getSingleton('catalog/product_visibility')->getVisibleInSearchIds())) {
                     $delete = TRUE;
                 }
                 if ($delete) {
