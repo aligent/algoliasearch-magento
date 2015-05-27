@@ -254,13 +254,27 @@ class Algolia_Algoliasearch_Model_Indexer_Algolia extends Mage_Index_Model_Index
             case Mage_Index_Model_Event::TYPE_SAVE:
                 /** @var $product Mage_Catalog_Model_Product */
                 $product = $event->getDataObject();
+
+                //Reload required attributes instead of product for performance
+                $store = $product->getStore();
+                $productId = $product->getId();
+                $status = ($product->getStatus() !== false) ? $product->getStatus() : $product->getResource()->getAttributeRawValue($productId, 'status', $store);
+                $visibility = $product->getData('visibility');
+
                 // Delete disabled or not visible for search products
                 $delete = FALSE;
-                if ($product->getStatus() == Mage_Catalog_Model_Product_Status::STATUS_DISABLED) {
+                if ($status == Mage_Catalog_Model_Product_Status::STATUS_DISABLED) {
                     $delete = TRUE;
-                } elseif (!in_array($product->getData('visibility'), Mage::getSingleton('catalog/product_visibility')->getVisibleInSearchIds())) {
-                    $delete = TRUE;
+                } else {
+                    if($visibility==false && $store->getId()!==0) {
+                        $visibility = $product->getResource()->getAttributeRawValue($productId, 'visibility', $store);
+                    }
+
+                    if (!in_array($visibility, Mage::getSingleton('catalog/product_visibility')->getVisibleInSearchIds())) {
+                        $delete = TRUE;
+                    }
                 }
+
                 if ($delete) {
                     $event->addNewData('catalogsearch_delete_product_id', $product->getId());
                     if (Mage::helper('algoliasearch')->isIndexProductCount()) {
