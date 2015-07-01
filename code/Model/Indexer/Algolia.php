@@ -258,7 +258,8 @@ class Algolia_Algoliasearch_Model_Indexer_Algolia extends Mage_Index_Model_Index
                 $delete = FALSE;
                 if ($product->getStatus() == Mage_Catalog_Model_Product_Status::STATUS_DISABLED) {
                     $delete = TRUE;
-                } elseif (!in_array($product->getData('visibility'), Mage::getSingleton('catalog/product_visibility')->getVisibleInSearchIds())) {
+                }
+                if (!in_array($product->getData('visibility'), Mage::getSingleton('catalog/product_visibility')->getVisibleInSearchIds())) {
                     $delete = TRUE;
                 }
                 if ($delete) {
@@ -287,7 +288,7 @@ class Algolia_Algoliasearch_Model_Indexer_Algolia extends Mage_Index_Model_Index
 
                 // Check if status changed
                 $attrData = $actionObject->getAttributesData();
-                if (isset($attrData['status'])) {
+                if (isset($attrData['status']) || isset($attrData['visibility'])) {
                     $rebuildIndex                        = TRUE;
                     $reindexData['catalogsearch_status'] = $attrData['status'];
                 }
