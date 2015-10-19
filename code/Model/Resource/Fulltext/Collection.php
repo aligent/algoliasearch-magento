@@ -2,23 +2,27 @@
 
 class Algolia_Algoliasearch_Model_Resource_Fulltext_Collection extends Mage_CatalogSearch_Model_Resource_Fulltext_Collection
 {
-
     /**
-     * Add search query filter without preparing result since result table causes lots of lock contention.
-     *
-     * @param string $query
-     * @throws Exception
-     * @return Mage_CatalogSearch_Model_Resource_Fulltext_Collection
+     * Intercept query
      */
     public function addSearchFilter($query)
     {
-        if ( ! Mage::helper('algoliasearch')->isEnabled() || Mage::helper('algoliasearch')->useResultCache()) {
+        $storeId = Mage::app()->getStore()->getId();
+        $config = Mage::helper('algoliasearch/config');
+
+        if ($config->isEnabledFrontEnd($storeId) === false)
             return parent::addSearchFilter($query);
-        }
+
+        $data = array();
 
         // This method of filtering the product collection by the search result does not use the catalogsearch_result table
         try {
-            $data = Mage::helper('algoliasearch')->getSearchResult($query, Mage::app()->getStore()->getId());
+            if ($config->isInstantEnabled($storeId) === false || $config->makeSeoRequest($storeId))
+            {
+                $algolia_query = $query !== '__empty__' ? $query : '';
+                $data = Mage::helper('algoliasearch')->getSearchResult($algolia_query, $storeId);
+            }
+
         } catch (Exception $e) {
             Mage::getSingleton('catalog/session')->addError(Mage::helper('algoliasearch')->__('Search failed. Please try again.'));
             $this->getSelect()->columns(array('relevance' => new Zend_Db_Expr("e.entity_id")));
@@ -27,10 +31,10 @@ class Algolia_Algoliasearch_Model_Resource_Fulltext_Collection extends Mage_Cata
         }
 
         $sortedIds = array_reverse(array_keys($data));
+
         $this->getSelect()->columns(array('relevance' => new Zend_Db_Expr("FIND_IN_SET(e.entity_id, '".implode(',',$sortedIds)."')")));
         $this->getSelect()->where('e.entity_id IN (?)', $sortedIds);
 
         return $this;
     }
-
 }
